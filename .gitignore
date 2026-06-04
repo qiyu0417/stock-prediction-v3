@@ -9,8 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
-# 模型权重 (太大 ~250MB, 训练生成)
-*.pth
+# 模型权重 (V1/V4 存档, 不用提交)
+model/v1_ensemble/*.pth
+model/v4_ensemble/*.pth
+model/60_158+39/*.pth
+model/60_158+39+market/*.pth
 
 # 训练数据 (太大)
 data/train.csv
