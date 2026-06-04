@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 虚拟环境
+.venv/
+
+# 输出
+output/*.csv
+
+# OS
+.DS_Store
+.vscode
+*.zip
+*.tar
