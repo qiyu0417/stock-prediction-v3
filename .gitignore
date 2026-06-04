@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# 模型权重 (太大 ~250MB, 训练生成)
+*.pth
+
+# 训练数据 (太大)
+data/train.csv
+
+# 预测输出
+output/*.csv
+
+# OS
+.DS_Store
+.vscode
+*.zip
+*.tar
