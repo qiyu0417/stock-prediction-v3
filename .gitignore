@@ -15,11 +15,25 @@ model/v4_ensemble/*.pth
 model/60_158+39/*.pth
 model/60_158+39+market/*.pth
 
+# V7 实验 (过拟合, 不发布)
+model/v7_ensemble/
+
 # 训练数据 (太大)
 data/train.csv
+data/stock_data.csv
+
+# 预处理中间数据
+data/preprocessed_v5/
 
 # 预测输出
 output/*.csv
+
+# Claude Code 内部文件
+.claude/
+
+# 日志和临时文件
+*.log
+_debug*.txt
 
 # OS
 .DS_Store
