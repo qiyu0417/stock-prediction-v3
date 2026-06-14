@@ -1,15 +1,14 @@
-# DeepSleep V1 — 沪深300排序选股模型
+# DeepSleep — 沪深300排序选股模型
 
 基于排序学习 (Learning-to-Rank) 的沪深300成分股优选方案。
 
-**DeepSleep V1 = 4专家集成 × 4D市场状态 × 反弹确认 × 质量加分 × 置信度不等权分配**
+**当前最优: ListMLE k=10 = 4专家集成 + 8维个股Embedding + ListMLE排序损失 + 后处理管线**
 
-| 指标 | 数值 |
-|------|------|
-| 2026年1-5月累计收益 | **+13.00%** |
-| 月胜率 | 3/5 (60%) |
-| 最大单月收益 | +8.05% (1月) |
-| 空仓月份 | 2/5 (2月、4月 — 正确避坑) |
+| 指标 | V7 (基准) | Stock Emb | ListMLE k=10 |
+|------|------|------|------|
+| 2026年6月样本外平均 | +5.15% | +5.54% | **+9.21%** |
+| 6月W1 | +1.24% | +5.12% | +3.84% |
+| 6月W2 | +9.06% | +5.96% | **+14.57%** |
 
 ---
 
@@ -17,16 +16,18 @@
 
 ### 专家集成 (4 Experts)
 
-| 专家 | 类型 | d_model | nhead | FFN | 层数 | 参数量 |
-|------|------|---------|-------|-----|------|--------|
-| balanced_v3 | Transformer | 256 | 8 | 1024 (4x) | 6 | ~16M |
-| deep_v3 | Transformer | 192 | 8 | 768 (4x) | 8 | ~12M |
-| conv_multiscale | Conv/TCN | 256 | 4 | - | - | ~12M |
-| conv_deep | Conv/TCN | 384 | 4 | - | - | ~28M |
+| 专家 | 类型 | d_model | nhead | FFN | 层数 |
+|------|------|---------|-------|-----|------|
+| balanced_v3 | Transformer | 256 | 8 | 1024 | 6 |
+| deep_v3 | Transformer | 192 | 8 | 768 | 8 |
+| conv_multiscale | Conv/TCN | 256 | 4 | - | - |
+| conv_deep | Conv/TCN | 384 | 4 | - | - |
 
 - 等权平均融合 (0.25 × 4)
-- MC Dropout 推理: 5轮 × 30次采样
+- MC Dropout 推理: 5轮 × 20次采样
 - 输入: 60天 × 197维 (158 Alpha + 39 技术指标)
+- Stock Emb 变体: 额外 8 维可学习个股 Embedding
+- 损失函数: ListMLE (k=10, temperature=0.5) — 直接优化 Top-K 排序概率
 
 ### 后处理管线
 
@@ -37,11 +38,11 @@ MC Dropout 原始评分
     ↓
 波动率过滤 → 剔除 top 5% 高波动股
     ↓
-反弹确认 → 近2日未反弹 (>0.8%) 降权 0.92×
+反弹确认 → 近2日未反弹降权 0.92×
     ↓
-质量加分 → 稳健趋势股获得 +5% 加成
+质量加分 → score += (quality - 0.5) × 0.05
     ↓
-置信度不等权分配 → softmax(t=0.3) + 30% 单票上限
+等权分配 Top5
 ```
 
 ### 4D 市场状态
@@ -53,36 +54,47 @@ MC Dropout 原始评分
 | 加速跌 | 近5日跌速 vs 前10日跌速 | 25% |
 | 波动率 | vol_20 / vol_60 比率 | 20% |
 
-**空仓触发条件 (任一)**:
-- 综合压力 > 0.65 (risk_off)
-- < 25% 股票在 MA20 以上 (广度崩盘)
-- 连续5天全部下跌
-- 加速下跌 + 趋势双高
-
 ---
 
 ## 项目结构
 
 ```
 ├── README.md
+├── CLAUDE.md
 ├── code/src/
-│   ├── deepsleep_v1.py        # DeepSleep V1 预测入口 ★
-│   ├── config_v5.py            # 模型配置
-│   ├── ensemble_models.py      # 专家模型定义 (Transformer/Conv/Meta)
-│   ├── market_regime.py        # 4D 市场状态检测
-│   ├── quality_filter.py       # 反弹确认 + 质量加分 + 不等权分配 + 波动率过滤
-│   ├── train_v5_disk.py        # 磁盘管线训练脚本
-│   ├── utils.py                # 特征工程 (158+39)
-│   └── train.py                # 损失函数 + 数据集构建
-├── model/v5_ensemble/          # DeepSleep V1 模型权重
+│   ├── deepsleep_v1.py         # 主预测入口
+│   ├── predict_v6.py           # V6 预测管线
+│   ├── config_v5.py              # V7 模型配置 (197维)
+│   ├── config_stock_emb.py       # Stock Emb dim=4 配置
+│   ├── config_stock_emb_8.py     # Stock Emb dim=8 配置
+│   ├── ensemble_models.py        # 专家模型 (Transformer/Conv)
+│   ├── quality_filter.py         # 后处理管线
+│   ├── market_regime.py          # 4D 市场状态检测
+│   ├── utils.py                  # 特征工程 (158+39+行业)
+│   ├── train.py                  # 损失函数 + 数据集 (含ListMLE/ApproxNDCG/Hybrid)
+│   ├── train_stock_emb_8_loss.py # dim=8 损失函数训练
+│   ├── train_listmle_tune.py     # ListMLE k/temperature 调参
+│   ├── train_v5_disk.py          # 磁盘管线训练
+│   ├── train_stock_emb.py        # Stock Emb 训练
+│   ├── fetch_industry.py       # 行业分类数据获取
+│   ├── update_data.py          # 数据更新
+│   ├── check_data.py           # 数据检查
+│   └── stock_names.py          # 股票代码→名称映射
+├── model/
+│   ├── stock_emb_8_listmle_k10_t0.5/  # ★ 当前最优 (ListMLE k=10)
+│   ├── stock_emb_ensemble/            # Stock Emb 基准 (WeightedRankingLoss)
+│   ├── v7_ensemble/                   # V7 基准模型
+│   ├── v5_ensemble/                   # V5 归档
+│   └── v1_ensemble/                   # V1 归档
 ├── test/
-│   ├── compare_v6.py           # V6 (DeepSleep V1) 月度对比
-│   ├── compare_v5.py           # V5 vs V3 对比
-│   ├── compare_v7.py           # V6 vs V7 对比
-│   └── compare_teammate.py     # 队友模型对比
+│   ├── eval_stock_emb.py       # Stock Emb vs V7 评估
+│   └── backtest_monthly.py     # 月度回测
 ├── data/
-│   └── test.csv                # 官方测试数据
-└── output/                     # 预测输出
+│   ├── train.csv               # 训练数据 (2024-01 ~ 2026-05)
+│   ├── test.csv                # 测试数据 (2026-05-28 ~ 2026-06-12)
+│   ├── industry.csv            # 行业分类
+│   └── hs300_stock_list.csv    # 沪深300成分股
+└── GUIDE.md                    # 环境搭建指南
 ```
 
 ---
@@ -92,44 +104,29 @@ MC Dropout 原始评分
 ### 预测
 
 ```bash
-# 预测 test.csv 日期
 python code/src/deepsleep_v1.py
-
-# 预测指定日期
 python code/src/deepsleep_v1.py --date 2026-06-06
-
-# 使用自定义数据
-python code/src/deepsleep_v1.py --data path/to/data.csv --output path/to/result.csv
 ```
 
 ### 训练
 
 ```bash
-# 两阶段磁盘管线 (避免 OOM)
+# Stock Embedding 模型
+python code/src/train_stock_emb.py
+
+# V7 基准模型
 python code/src/train_v5_disk.py
 ```
 
-### 回测对比
+### 评估
 
 ```bash
-# V6 / V7 / 队友模型 月度对比
-python test/compare_v6.py
-python test/compare_v7.py
-python test/compare_teammate.py
+# Stock Emb vs V7 6月对比
+python test/eval_stock_emb.py
+
+# 月度回测
+python test/backtest_monthly.py
 ```
-
----
-
-## 版本演进
-
-| 版本 | 专家数 | 关键改进 | 累计收益 |
-|------|--------|----------|----------|
-| V1 | 13 | MetaAggregator + 滚动窗口 | -6.75% |
-| V2 | 5 | 数据集 bug 修复 | +2.77% |
-| V3 | 4 | 专家剪枝 + 投票共识 | -0.81% |
-| V5 | 4 | nhead=8, FFN 4x, Winsorization | +5.75% |
-| **DeepSleep V1 (V6)** | **4** | **+4D市场状态 + 反弹确认 + 质量加分 + 不等权分配** | **+13.00%** |
-| V7 | 4 | 100 epoch (过拟合) | +7.21% |
 
 ---
 
@@ -138,7 +135,7 @@ python test/compare_teammate.py
 | 参数 | 值 |
 |------|-----|
 | 序列长度 | 60 天 |
-| 特征维度 | 197 (158 Alpha + 39 技术指标) |
+| 特征维度 | 197 (V7) / 197+4 个股Emb |
 | 标签 | (close_t5 - open_t1) / open_t1 |
 | Epochs | 50 |
 | Batch Size | 4 |
@@ -146,16 +143,37 @@ python test/compare_teammate.py
 | Weight Decay | 5e-5 |
 | 优化器 | Adam |
 | 调度器 | CosineAnnealingWarmRestarts (T0=8) |
-| 损失函数 | WeightedRankingLoss (listwise + pairwise + MSE) |
+| 损失函数 | WeightedRankingLoss / ListMLE (最优) |
 | 早停 | patience=6, min_delta=2e-4 |
-| Winsorization | 1% / 99% 分位数截断 |
 
 ---
 
-## 关键发现
+## 实验记录 (18次, 2次成功)
 
-1. **后处理 > 裸模型**: V5 裸模型 +5.75% → 加入 V6 管线 +13.00%
-2. **4D 市场状态有效**: 1月 risk_on 赚 +8%, 2月/4月 correctly 空仓避坑
-3. **简单融合 > 复杂融合**: 等权 0.25 优于 MetaAggregator
-4. **50 epoch > 100 epoch**: 更多训练导致过拟合 (+7.21% vs +13.00%)
-5. **轻后处理 > 重后处理**: 质量加分 5% / 反弹惩罚 0.92 优于更激进的参数
+| # | 实验 | 结果 vs V7 | 结论 |
+|---|------|:------:|------|
+| 1 | 标签对齐 close→open | -4.35% | 收盘价信息 > 开盘价 |
+| 2 | 剔除弱专家 4→3 | -8.31% | 集成多样性 > 个体质量 |
+| 3 | 后处理网格搜索 | -5.23% | 历史最优 ≠ 未来最优 |
+| 4 | CS截面特征 + LambdaRank | 全负分 | 截面特征编码方式有问题 |
+| 5 | 8专家合并 (V7+V5) | V5死权重 | 专家质量参差不齐 |
+| 6 | 6专家 (4基础+2变体) | 未完成 | 训练不稳定 |
+| 7 | 训练窗口 (6m/12m/18m) | 全负 | 窗口不敏感 |
+| 8 | 行业 one-hot (14维) | -3.55% | 14类太粗,制造业占一半 |
+| 9 | 行业 Embedding (14→3) | -4.93% | 粗粒度行业信号是噪音 |
+| **10** | **个股 Embedding (4维)** | **+0.39%** | **个股身份信息有效** |
+| 11 | Embedding 8维 | - | 需配合更好损失函数 |
+| **12** | **ListMLE k=10 T=0.5** | **+3.25%** | **排序损失 > 逐点回归损失** |
+| 13 | LambdaRank 损失 | +0.48% | 微弱提升 |
+| 14 | ApproxNDCG 损失 | -2.88% | 近似NDCG不稳定 |
+| 15 | Hybrid 混合损失 | +1.85% | 混合不如纯ListMLE |
+| 16 | k=5 vs k=10 对比 | k=10更优 | top-10容错空间有助于top-5 |
+| 17 | 后处理参数网格搜索 | 无差异 | ListMLE对后处理不敏感 |
+| 18 | 专家权重调优 | 无差异 | 等权已足够 |
+
+### 关键教训
+
+1. **不要改动后处理和集成策略** — V7 这层配置极其稳健
+2. **排序损失 > 回归损失** — ListMLE 直接优化排序概率比逐点加权回归更匹配任务
+3. **个股身份 > 行业分类** — 每只股票有自己的"个性"比粗行业标签有用
+4. **等权融合已足够** — 专家权重调优无增益
