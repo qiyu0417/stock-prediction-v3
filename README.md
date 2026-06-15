@@ -2,13 +2,13 @@
 
 基于排序学习 (Learning-to-Rank) 的沪深300成分股优选方案。
 
-**当前最优: ListMLE k=10 = 4专家集成 + 8维个股Embedding + ListMLE排序损失 + 后处理管线**
+**当前最优: ListMLE k=3 T=0.5 = 4专家集成 + 8维个股Embedding + ListMLE排序损失 + 后处理管线**
 
-| 指标 | V7 (基准) | Stock Emb | ListMLE k=10 |
+| 指标 | V7 (基准) | k=10 T=0.5 | **k=3 T=0.5** |
 |------|------|------|------|
-| 2026年6月样本外平均 | +5.15% | +5.54% | **+9.21%** |
-| 6月W1 | +1.24% | +5.12% | +3.84% |
-| 6月W2 | +9.06% | +5.96% | **+14.57%** |
+| 2026年6月样本外平均 | +5.15% | +6.95% | **+7.97%** |
+| 6月W1 | +1.24% | +3.17% | +1.02% |
+| 6月W2 | +9.06% | +10.74% | **+14.92%** |
 
 ---
 
@@ -81,7 +81,7 @@ MC Dropout 原始评分
 │   ├── check_data.py           # 数据检查
 │   └── stock_names.py          # 股票代码→名称映射
 ├── model/
-│   ├── stock_emb_8_listmle_k10_t0.5/  # ★ 当前最优 (ListMLE k=10)
+│   ├── stock_emb_8_listmle_k3_t0.5/   # ★ 当前最优 (ListMLE k=3 T=0.5)
 │   ├── stock_emb_ensemble/            # Stock Emb 基准 (WeightedRankingLoss)
 │   ├── v7_ensemble/                   # V7 基准模型
 │   ├── v5_ensemble/                   # V5 归档

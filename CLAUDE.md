@@ -16,22 +16,32 @@ R = (P_{T+5}^open - P_{T+1}^open) / P_{T+1}^open
 | `data/train.csv` | 172,790 | 2024-01-02 ~ 2026-05-27 |
 | `data/test.csv` | ~3,500 | 2026-05-28 ~ 2026-06-12 |
 
-## 当前最佳模型: ListMLE k=10 ★
+## 当前最佳模型: ListMLE k=3 T=0.5 ★
 
-**位置**: `model/stock_emb_8_listmle_k10_t0.5/`
+**位置**: `model/stock_emb_8_listmle_k3_t0.5/`
 **配置**: 4专家 ensemble (config_stock_emb_8), 个股Embedding dim=8
 - `balanced_v3`: Transformer d=256/8head/6层/FFN=1024
 - `deep_v3`: Transformer d=192/8head/8层/FFN=768
 - `conv_multiscale`: TCN hidden=256
 - `conv_deep`: TCN hidden=384
-- 融合: MC Dropout (5轮×20次), 权重由ensemble_config.json决定
+- 融合: MC Dropout (5轮×20次)
 - **个股Embedding**: 每只股票8维可学习向量, 在cross-stock attention前注入
 
-**训练**: `code/src/train_listmle_tune.py` — ListMLE k=10, temperature=0.5, 50 epochs
+**训练**: `code/src/train_listmle_tune.py` — ListMLE k=3, temperature=0.5, 50 epochs
 **特征**: 197维 (158 Alpha + 39 技术指标) + 8维个股Embedding
-**6月表现**: Jun W1 +3.84%, Jun W2 +14.57%, 平均 **+9.21%**
+**6月表现**: Jun W1 +1.02%, Jun W2 +14.92%, 平均 **+7.97%**
 
-## 次优模型: Stock Embedding (WeightedRankingLoss)
+## 次优模型: ListMLE k=3 T=1.0
+
+**位置**: `model/stock_emb_8_listmle_k3_t1.0/`
+**6月表现**: Jun W1 +1.73%, Jun W2 +13.85%, 平均 +7.79%
+
+## ListMLE k=10 (第三)
+
+**位置**: `model/stock_emb_8_listmle_k10_t0.5/`
+**6月表现**: Jun W1 +3.17%, Jun W2 +10.74%, 平均 +6.95%
+
+## 基准: Stock Embedding (WeightedRankingLoss)
 
 **位置**: `model/stock_emb_ensemble/`
 **配置**: 同上但 dim=4, WeightedRankingLoss
@@ -57,11 +67,11 @@ R = (P_{T+5}^open - P_{T+1}^open) / P_{T+1}^open
 ## 实际表现
 
 ### 6月样本外 (2026-06-01 ~ 2026-06-12)
-| 周 | V7 | Stock Emb | ListMLE k=10 |
-|------|------:|------:|------:|
-| Jun W1 | +1.24% | +5.12% | +3.84% |
-| Jun W2 | +9.06% | +5.96% | **+14.57%** |
-| **平均** | +5.15% | +5.54% | **+9.21%** |
+| 周 | V7 | Stock Emb | k=10 T=0.5 | **k=3 T=0.5** |
+|------|------:|------:|------:|------:|
+| Jun W1 | +1.24% | +5.12% | +3.17% | +1.02% |
+| Jun W2 | +9.06% | +5.96% | +10.74% | **+14.92%** |
+| **平均** | +5.15% | +5.54% | +6.95% | **+7.97%** |
 
 ### 月度回测 (Jan-May 2026, 训练期内)
 | 月 | V7 | Stock Emb |
@@ -73,7 +83,7 @@ R = (P_{T+5}^open - P_{T+1}^open) / P_{T+1}^open
 | 5月 | +10.90% | +11.81% |
 | **累计** | +12.48% | +5.25% |
 
-## 全部实验记录 (18次, 2次成功)
+## 全部实验记录 (19次, 3次成功)
 
 | # | 实验 | vs V7 | 教训 |
 |---|------|:------:|------|
@@ -89,14 +99,17 @@ R = (P_{T+5}^open - P_{T+1}^open) / P_{T+1}^open
 | **10** | **个股 Embedding (4维)** | **+0.39%** | **个股身份有效** |
 | 11 | Embedding 8维 | - | 需重新评估 |
 | 12 | LambdaRank 损失 | +0.48% | 微弱提升 |
-| **13** | **ListMLE k=10 T=0.5** | **+3.25%** | **排名损失显著优于加权回归** |
+| **13** | **ListMLE k=10 T=0.5** | +1.80% | 排序损失有效 |
 | 14 | ApproxNDCG 损失 | -2.88% | 近似NDCG不稳定 |
 | 15 | Hybrid (ListMLE+NDCG+Lambda) | +1.85% | 混合不如纯ListMLE |
 | 16 | k=5 vs k=10 | k=10更优 | top-10与比赛Top5不矛盾 |
-| 17 | 后处理参数网格搜索 | 无差异 | ListMLE模型对后处理不敏感 |
+| 17 | 后处理参数网格搜索 | 无差异 | ListMLE对后处理不敏感 |
 | 18 | 专家权重调优 | 无差异 | 等权已足够 |
+| **19** | **ListMLE k=3 T=0.5** | **+2.43%** | **k=3 > k=10, T=0.5 > T=1.0** |
 
 **关键约束: 不要改动后处理和集成策略。**
+
+**严重警告: 禁止删除 model/ 下的任何 .pth 文件。禁止 rm -rf。最优模型已设只读。**
 
 ## 关键文件
 ```
