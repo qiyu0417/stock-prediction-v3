@@ -135,10 +135,23 @@ class StockTransformerExpert(nn.Module):
         self.cfg_name = cfg.get('name', 'expert')
         self.mc_dropout_rate = cfg.get('mc_dropout_rate', 0.1)
         self.sd_prob = cfg.get('sd_prob', 0.9)
+        self.industry_embed_dim = cfg.get('industry_embed_dim', 0)
+        self.stock_embed_dim = cfg.get('stock_embed_dim', 0)
 
         # 输入投影
-        self.input_proj = nn.Linear(input_dim, self.d_model)
+        if self.industry_embed_dim > 0:
+            tech_dim = input_dim - 14
+            self.input_proj = nn.Linear(tech_dim, self.d_model)
+            self.industry_compressor = nn.Linear(14, self.industry_embed_dim)
+            self.industry_fusion = nn.Linear(self.d_model + self.industry_embed_dim, self.d_model)
+        else:
+            self.input_proj = nn.Linear(input_dim, self.d_model)
         self.pos_encoder = PositionalEncoding(self.d_model, cfg['dropout'])
+
+        # 个股Embedding
+        if self.stock_embed_dim > 0:
+            self.stock_embedding = nn.Embedding(num_stocks, self.stock_embed_dim)
+            self.stock_emb_proj = nn.Linear(self.stock_embed_dim, self.d_model)
 
         # 时序编码器（多层 + 随机深度 + MC Dropout）
         self.temporal_layers = nn.ModuleList([
@@ -197,7 +210,15 @@ class StockTransformerExpert(nn.Module):
         src_flat = src.view(batch_size * num_stocks, seq_len, feature_dim)
 
         # 输入投影 + 位置编码
-        x = self.input_proj(src_flat)
+        if self.industry_embed_dim > 0:
+            tech = src_flat[..., :-14]
+            ind = src_flat[..., -14:]
+            x = self.input_proj(tech)
+            i = self.industry_compressor(ind)
+            x = torch.cat([x, i], dim=-1)
+            x = self.industry_fusion(x)
+        else:
+            x = self.input_proj(src_flat)
         x = self.pos_encoder(x)
 
         # 时序编码（带随机深度）
@@ -209,6 +230,11 @@ class StockTransformerExpert(nn.Module):
 
         # 股票间交互
         stock_features = x.view(batch_size, num_stocks, -1)
+        if self.stock_embed_dim > 0:
+            stock_ids = torch.arange(num_stocks, device=src.device)
+            stock_emb = self.stock_embedding(stock_ids)
+            stock_emb = stock_emb.unsqueeze(0).expand(batch_size, -1, -1)
+            stock_features = stock_features + self.stock_emb_proj(stock_emb)
         stock_features = self.cross_stock_attention(stock_features)
         stock_features = stock_features.view(batch_size * num_stocks, -1)
 
@@ -225,13 +251,26 @@ class StockTransformerExpert(nn.Module):
         batch_size, num_stocks, seq_len, feature_dim = src.shape
         x = src.view(batch_size * num_stocks, seq_len, feature_dim)
 
-        x = self.input_proj(x)
+        if self.industry_embed_dim > 0:
+            tech = x[..., :-14]
+            ind = x[..., -14:]
+            x = self.input_proj(tech)
+            i = self.industry_compressor(ind)
+            x = torch.cat([x, i], dim=-1)
+            x = self.industry_fusion(x)
+        else:
+            x = self.input_proj(x)
         x = self.pos_encoder(x)
         for layer in self.temporal_layers:
             x = layer(x)
         features = self.feature_attention(x)  # [B*N, d_model]
 
         stock_features = features.view(batch_size, num_stocks, -1)
+        if self.stock_embed_dim > 0:
+            stock_ids = torch.arange(num_stocks, device=src.device)
+            stock_emb = self.stock_embedding(stock_ids)
+            stock_emb = stock_emb.unsqueeze(0).expand(batch_size, -1, -1)
+            stock_features = stock_features + self.stock_emb_proj(stock_emb)
         stock_features = self.cross_stock_attention(stock_features)
         stock_features = stock_features.view(batch_size * num_stocks, -1)
 
@@ -325,11 +364,24 @@ class ConvStockExpert(nn.Module):
         self.num_stocks = num_stocks
         self.cfg_name = cfg.get('name', 'conv_expert')
         self.mc_dropout_rate = cfg.get('mc_dropout_rate', 0.1)
+        self.industry_embed_dim = cfg.get('industry_embed_dim', 0)
+        self.stock_embed_dim = cfg.get('stock_embed_dim', 0)
 
         # 输入投影
-        self.input_proj = nn.Linear(input_dim, hidden)
+        if self.industry_embed_dim > 0:
+            tech_dim = input_dim - 14
+            self.input_proj = nn.Linear(tech_dim, hidden)
+            self.industry_compressor = nn.Linear(14, self.industry_embed_dim)
+            self.industry_fusion = nn.Linear(hidden + self.industry_embed_dim, hidden)
+        else:
+            self.input_proj = nn.Linear(input_dim, hidden)
         self.input_norm = nn.LayerNorm(hidden)
         self.input_dropout = nn.Dropout(cfg['dropout'])
+
+        # 个股Embedding
+        if self.stock_embed_dim > 0:
+            self.stock_embedding = nn.Embedding(num_stocks, self.stock_embed_dim)
+            self.stock_emb_proj = nn.Linear(self.stock_embed_dim, hidden)
 
         # 多尺度TCN块: 不同膨胀率捕获短期/中期/长期模式
         self.tcn_blocks = nn.ModuleList()
@@ -384,7 +436,15 @@ class ConvStockExpert(nn.Module):
         x = src.view(batch_size * num_stocks, seq_len, feature_dim)
 
         # 输入投影
-        x = self.input_proj(x)
+        if self.industry_embed_dim > 0:
+            tech = x[..., :-14]
+            ind = x[..., -14:]
+            x = self.input_proj(tech)
+            i = self.industry_compressor(ind)
+            x = torch.cat([x, i], dim=-1)
+            x = self.industry_fusion(x)
+        else:
+            x = self.input_proj(x)
         x = self.input_norm(x)
         x = self.input_dropout(x)
 
@@ -397,6 +457,11 @@ class ConvStockExpert(nn.Module):
 
         # 股票间交互
         stock_features = x.view(batch_size, num_stocks, -1)
+        if self.stock_embed_dim > 0:
+            stock_ids = torch.arange(num_stocks, device=src.device)
+            stock_emb = self.stock_embedding(stock_ids)
+            stock_emb = stock_emb.unsqueeze(0).expand(batch_size, -1, -1)
+            stock_features = stock_features + self.stock_emb_proj(stock_emb)
         stock_features = self.cross_stock_attention(stock_features)
         stock_features = stock_features.view(batch_size * num_stocks, -1)
 
@@ -412,7 +477,15 @@ class ConvStockExpert(nn.Module):
         batch_size, num_stocks, seq_len, feature_dim = src.shape
         x = src.view(batch_size * num_stocks, seq_len, feature_dim)
 
-        x = self.input_proj(x)
+        if self.industry_embed_dim > 0:
+            tech = x[..., :-14]
+            ind = x[..., -14:]
+            x = self.input_proj(tech)
+            i = self.industry_compressor(ind)
+            x = torch.cat([x, i], dim=-1)
+            x = self.industry_fusion(x)
+        else:
+            x = self.input_proj(x)
         x = self.input_norm(x)
         x = self.input_dropout(x)
         for block in self.tcn_blocks:
@@ -420,6 +493,11 @@ class ConvStockExpert(nn.Module):
         features = self.feature_attention(x)  # [B*N, hidden]
 
         stock_features = features.view(batch_size, num_stocks, -1)
+        if self.stock_embed_dim > 0:
+            stock_ids = torch.arange(num_stocks, device=src.device)
+            stock_emb = self.stock_embedding(stock_ids)
+            stock_emb = stock_emb.unsqueeze(0).expand(batch_size, -1, -1)
+            stock_features = stock_features + self.stock_emb_proj(stock_emb)
         stock_features = self.cross_stock_attention(stock_features)
         stock_features = stock_features.view(batch_size * num_stocks, -1)
 
@@ -949,7 +1027,7 @@ class StatArbRegressionExpert(nn.Module):
         x = self.pos_encoder(x)
 
         # 提取收益率（用收盘价变化近似）
-        close_prices = src.view(B*N, L, F)[:, :, 3]  # 收盘价
+        close_prices = src.view(B*N, L, F)[:, :, 2]  # 收盘价 (feature index 2)
         returns = (close_prices[:, 1:] - close_prices[:, :-1]) / (close_prices[:, :-1] + 1e-8)
         returns = torch.nn.functional.pad(returns, (1, 0))
 

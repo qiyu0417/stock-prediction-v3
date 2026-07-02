@@ -1,0 +1,47 @@
+{
+  "feature_dim": 197,
+  "num_stocks": 300,
+  "expert_configs": [
+    {
+      "name": "statarb_base",
+      "type": "statarb",
+      "d_model": 192,
+      "nhead": 4,
+      "num_layers": 2,
+      "dim_feedforward": 384,
+      "dropout": 0.12,
+      "mc_dropout_rate": 0.1,
+      "sd_prob": 0.85
+    },
+    {
+      "name": "statarb_deep",
+      "type": "statarb",
+      "d_model": 192,
+      "nhead": 4,
+      "num_layers": 3,
+      "dim_feedforward": 384,
+      "dropout": 0.15,
+      "mc_dropout_rate": 0.12,
+      "sd_prob": 0.8
+    },
+    {
+      "name": "statarb_wide",
+      "type": "statarb",
+      "d_model": 256,
+      "nhead": 8,
+      "num_layers": 2,
+      "dim_feedforward": 512,
+      "dropout": 0.12,
+      "mc_dropout_rate": 0.1,
+      "sd_prob": 0.85
+    }
+  ],
+  "expert_results": {
+    "statarb_base": 0.04294669227805913,
+    "statarb_deep": 0.041496712123115606,
+    "statarb_wide": 0.04438184413076342
+  },
+  "features": "158+39",
+  "loss_type": "hybrid",
+  "model_type": "statarb"
+}

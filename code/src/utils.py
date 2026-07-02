@@ -4,8 +4,8 @@
 - engineer_features: 158个Alpha特征
 - engineer_features_158plus39: 合并特征(197维)
 - add_market_features: 4个市场级别特征
-- engineer_features_158plus39_market: 合并158+39+市场(201维)
-- create_ranking_dataset_vectorized: 向量化构建排序样本（放宽交易日过滤）
+- add_industry_features: 行业门类one-hot编码(14维)
+- create_ranking_dataset_vectorized: 向量化构建排序样本
 """
 import pandas as pd
 import numpy as np
@@ -13,11 +13,71 @@ import joblib
 import os
 from tqdm import tqdm
 
+INDUSTRY_SECTORS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'J', 'K', 'L', 'M', 'Q', 'R']
+
+
+def add_industry_features(df, industry_path=None):
+    """
+    对每只股票添加行业门类 one-hot 编码 (14维)。
+    列名格式: IND_A, IND_B, ..., IND_R
+    """
+    if industry_path is None:
+        industry_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            'data', 'industry.csv')
+    if not os.path.exists(industry_path):
+        raise FileNotFoundError(f"行业数据不存在: {industry_path}，请先运行 fetch_industry.py")
+
+    ind_df = pd.read_csv(industry_path)
+    ind_df['股票代码'] = ind_df['股票代码'].astype(str).str.zfill(6)
+    sector_map = dict(zip(ind_df['股票代码'], ind_df['sector']))
+
+    df = df.copy()
+    df['_code_str'] = df['股票代码'].astype(str).str.zfill(6)
+    df['_sector'] = df['_code_str'].map(sector_map).fillna('Z')
+
+    for sec in INDUSTRY_SECTORS:
+        df[f'IND_{sec}'] = (df['_sector'] == sec).astype(float)
+
+    df.drop(columns=['_code_str', '_sector'], inplace=True)
+    return df
+
+
+INDUSTRY_COLS = [f'IND_{s}' for s in INDUSTRY_SECTORS]
+
 # 特征工程
 def _rolling_linear_regression(x, y):
     x = np.vstack([np.ones(len(x)), x]).T
     beta, res, _, _ = np.linalg.lstsq(x, y, rcond=None)
     return beta[1], res[0] if len(res) > 0 else 0.0, np.sum((y - (x @ beta))**2)
+
+
+CROSS_SECTIONAL_FEATURES = [
+    '开盘', '收盘', '最高', '最低', '成交量', '成交额', '换手率', '涨跌幅',
+    'sma_5', 'sma_20', 'ema_12', 'ema_26', 'ema_60',
+    'MA5', 'MA10', 'MA20', 'MA30', 'MA60',
+    'ROC5', 'ROC10', 'ROC20',
+    'VMA5', 'VMA10', 'VMA20', 'VMA30', 'VMA60',
+]
+
+
+def add_cross_sectional_features(df):
+    """对每个交易日截面做 z-score 标准化，添加 CS_ 前缀特征 (26维)"""
+    cs_features = [f for f in CROSS_SECTIONAL_FEATURES if f in df.columns]
+    if not cs_features:
+        return df
+    cs_dfs = []
+    for date, group in df.groupby('日期'):
+        g = group.copy()
+        for f in cs_features:
+            vals = g[f]
+            std = vals.std()
+            if std > 1e-8:
+                g[f'CS_{f}'] = (vals - vals.mean()) / std
+            else:
+                g[f'CS_{f}'] = 0.0
+        cs_dfs.append(g)
+    return pd.concat(cs_dfs).sort_index()
 
 
 def add_market_features(df):
@@ -40,10 +100,11 @@ def add_market_features(df):
     return df.merge(daily, on='日期', how='left')
 
 
-def engineer_features_158plus39(df, add_market=True):
+def engineer_features_158plus39(df, add_market=True, add_industry=False):
     """
     计算39个技术指标特征和158个Alpha特征，并合并。
     若 add_market=True，追加4个市场级别特征（201维）。
+    若 add_industry=True，追加14个行业门类one-hot特征（211/215维）。
     """
     df_copy = df.copy()
 
@@ -64,6 +125,8 @@ def engineer_features_158plus39(df, add_market=True):
 
     if add_market:
         df_final = add_market_features(df_final)
+    if add_industry:
+        df_final = add_industry_features(df_final)
 
     df_final.replace([np.inf, -np.inf], np.nan, inplace=True)
     df_final.fillna(0, inplace=True)
@@ -661,8 +724,11 @@ def create_ranking_dataset_vectorized(data, features, sequence_length, ranking_d
         if len(group) < 10:
             continue
         
-        # 提取数据
-        day_seqs = np.stack(group['seq'].values)          # (N, L, F)
+        # 提取数据 (avoid np.stack for memory fragmentation)
+        seq_vals = list(group['seq'].values)
+        day_seqs = np.empty((len(seq_vals),) + seq_vals[0].shape, dtype=np.float32)
+        for i, arr in enumerate(seq_vals):
+            day_seqs[i] = arr
         day_targets = group['target'].values              # (N,)
         day_stocks = group['stock_code'].tolist()         # [str]
 

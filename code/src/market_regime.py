@@ -35,7 +35,7 @@ def compute_market_regime(data, feature_cols, stock_ids, reference_date):
                 'accel_decline_score': 0.5, 'volatility_score': 0.5,
                 'composite': 0.5, 'regime': 'neutral'}
 
-    ret_df = pd.DataFrame(daily_returns).fillna(0)
+    ret_df = pd.DataFrame({k: pd.Series(v) for k, v in daily_returns.items()}).fillna(0)
     market_return = ret_df.mean(axis=1)
 
     # 1. 趋势风险
@@ -104,6 +104,14 @@ def compute_market_regime(data, feature_cols, stock_ids, reference_date):
         elif vol_ratio > 1.0: vol_score = 0.1
     result['volatility_score'] = vol_score
 
+    # Diagnostic values (computed above, exposed for regime-conditional use)
+    result['ret_5d'] = ret_5d
+    result['ret_10d'] = ret_10d
+    result['ret_20d'] = ret_20d
+    result['ratio_ma20'] = ratio_ma20 if total_valid > 0 else 0.5
+    result['vol_20'] = vol_20 if len(market_return) >= 20 else 0
+    result['vol_60'] = vol_60 if len(market_return) >= 60 else result['vol_20']
+
     # 综合评分
     composite = (
         result['trend_score'] * 0.30 +
@@ -118,20 +126,20 @@ def compute_market_regime(data, feature_cols, stock_ids, reference_date):
         result['regime'] = 'risk_on'
     elif composite < 0.45:
         result['regime'] = 'neutral'
-    elif composite < 0.65:
+    elif composite < 0.72:
         result['regime'] = 'cautious'
     else:
         result['regime'] = 'risk_off'
 
-    # 广度崩溃检测: <25% 股票在 MA20 以上 → 无条件空仓
-    breadth_crash = breadth_score >= 0.9  # ratio < 0.2
+    # 广度崩溃检测: <10% 股票在 MA20 以上 → 无条件空仓
+    breadth_crash = breadth_score >= 0.95  # ratio < 0.1
 
     # 连续下跌熔断: 等权市场近5日每天都跌 → 等待企稳
     recent_5_returns = market_return.tail(5)
     consecutive_downs = (recent_5_returns < 0).sum() >= 5 if len(recent_5_returns) >= 5 else False
 
     # 加速下跌 + 趋势双高 → 无条件空仓 (即使波动率低也不能抄底)
-    accel_trend_crash = (result['accel_decline_score'] >= 0.7 and result['trend_score'] >= 0.7)
+    accel_trend_crash = (result['accel_decline_score'] >= 0.85 and result['trend_score'] >= 0.85)
 
     # 空仓决策
     skip_trading = (

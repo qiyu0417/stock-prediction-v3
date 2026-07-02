@@ -9,11 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
-# 模型权重 (V1/V4 存档, 不用提交)
-model/v1_ensemble/*.pth
-model/v4_ensemble/*.pth
-model/60_158+39/*.pth
-model/60_158+39+market/*.pth
+# 模型权重 (太大, 用户通过训练脚本自行生成)
+*.pth
 
 # V7 实验 (过拟合, 不发布)
 model/v7_ensemble/

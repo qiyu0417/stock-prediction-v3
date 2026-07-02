@@ -1,0 +1,52 @@
+{
+  "feature_dim": 197,
+  "num_stocks": 300,
+  "stock_embed_dim": 8,
+  "expert_configs": [
+    {
+      "name": "balanced_v3",
+      "type": "transformer",
+      "d_model": 256,
+      "nhead": 8,
+      "num_layers": 6,
+      "dim_feedforward": 1024,
+      "dropout": 0.1,
+      "mc_dropout_rate": 0.1,
+      "sd_prob": 0.85,
+      "stock_embed_dim": 8
+    },
+    {
+      "name": "deep_v3",
+      "type": "transformer",
+      "d_model": 192,
+      "nhead": 8,
+      "num_layers": 8,
+      "dim_feedforward": 768,
+      "dropout": 0.12,
+      "mc_dropout_rate": 0.12,
+      "sd_prob": 0.8,
+      "stock_embed_dim": 8
+    },
+    {
+      "name": "conv_multiscale",
+      "type": "conv",
+      "hidden_channels": 256,
+      "nhead": 4,
+      "dropout": 0.12,
+      "mc_dropout_rate": 0.1,
+      "sd_prob": 0.9,
+      "stock_embed_dim": 8
+    },
+    {
+      "name": "conv_deep",
+      "type": "conv",
+      "hidden_channels": 384,
+      "nhead": 4,
+      "dropout": 0.15,
+      "mc_dropout_rate": 0.12,
+      "sd_prob": 0.85,
+      "stock_embed_dim": 8
+    }
+  ],
+  "multitask": true
+}

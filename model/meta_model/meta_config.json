@@ -1,0 +1,27 @@
+{
+  "feature_cols": [
+    "trend_score",
+    "breadth_score",
+    "accel_decline_score",
+    "volatility_score",
+    "composite",
+    "ret_5d",
+    "ret_10d",
+    "ret_20d",
+    "market_up_ratio_5d",
+    "market_return_5d",
+    "market_volatility_5d",
+    "consecutive_downs"
+  ],
+  "input_dim": 12,
+  "hidden_dim": 8,
+  "training_samples": 93,
+  "date_range": [
+    "2026-01-05",
+    "2026-05-27"
+  ],
+  "cv_mse_mean": 0.04512190148234367,
+  "cv_mse_std": 0.016427069706980598,
+  "cv_mae_mean": 0.1750824749469757,
+  "baseline_mse": 0.0513511523604393
+}

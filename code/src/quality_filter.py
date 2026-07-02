@@ -6,13 +6,17 @@ import pandas as pd
 
 
 BOUNCE_THRESHOLD = 0.008  # 近2日收益 > 0.8% 取消谨慎
+BOUNCE_PENALTY = 0.92      # 未确认反弹的惩罚系数
+VOLATILITY_PCT = 0.95       # 波动率过滤保留比例
 
 
-def bounce_confirm(data, stock_ids, reference_date):
+def bounce_confirm(data, stock_ids, reference_date, threshold=None):
     """
-    反弹确认: 检查每只股票近2日是否反弹 > 0.8%
+    反弹确认: 检查每只股票近2日是否反弹 > threshold
     返回: set of stock_ids that are NOT in danger (已反弹或无需谨慎)
     """
+    if threshold is None:
+        threshold = BOUNCE_THRESHOLD
     confirmed = set()
     for sid in stock_ids:
         stock_data = data[(data['股票代码'] == sid) & (data['日期'] <= reference_date)].sort_values('日期')
@@ -20,7 +24,7 @@ def bounce_confirm(data, stock_ids, reference_date):
             confirmed.add(sid)
             continue
         ret_2d = stock_data['return_1'].tail(2).sum()
-        if ret_2d > BOUNCE_THRESHOLD:
+        if ret_2d > threshold:
             confirmed.add(sid)
     return confirmed
 
@@ -131,6 +135,44 @@ def confidence_weighted_allocate(scores, stock_ids, regime_info=None, max_positi
         weights = weights * position_ratio
 
     return selected, weights.tolist()
+
+
+def equal_weight_allocate(stock_ids, max_positions=5):
+    """等权分配: 每只股票 1/N"""
+    if not stock_ids:
+        return [], []
+    n = min(len(stock_ids), max_positions)
+    selected = stock_ids[:n]
+    return selected, [1.0 / n] * n
+
+
+def quality_tilted_allocate(quality_scores, stock_ids, max_positions=5, tilt_strength=0.05):
+    """
+    质量分微调分配: 等权为基础，质量分高/低的小幅调整
+    - quality > 0.6: 加分 (最多+tilt_strength)
+    - quality < 0.4: 减分 (最多-tilt_strength)
+    - 不依赖模型置信度
+    """
+    if not stock_ids:
+        return [], []
+    n = min(len(stock_ids), max_positions)
+    selected = stock_ids[:n]
+    base = 1.0 / n
+
+    weights = []
+    for s in selected:
+        q = quality_scores.get(s, 0.5)
+        if q > 0.6:
+            tilt = tilt_strength * (q - 0.6) / 0.4
+        elif q < 0.4:
+            tilt = -tilt_strength * (0.4 - q) / 0.4
+        else:
+            tilt = 0.0
+        weights.append(base + tilt)
+
+    total = sum(weights)
+    weights = [w / total for w in weights]
+    return selected, weights
 
 
 def volatility_filter(data, stock_ids, reference_date, top_pct=0.85):

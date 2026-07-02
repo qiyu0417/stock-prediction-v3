@@ -14,10 +14,8 @@ from torch.utils.data import DataLoader
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
-from config import config
-from model import StockTransformer
 from utils import engineer_features_39, engineer_features_158plus39
-from utils import create_ranking_dataset_vectorized
+from utils import create_ranking_dataset_vectorized, CROSS_SECTIONAL_FEATURES, INDUSTRY_COLS
 import joblib
 import os
 import json
@@ -91,37 +89,55 @@ _TECH_39_ONLY = [
     'high_low_spread', 'open_close_spread', 'high_close_spread', 'low_close_spread'
 ]
 
+_CS_COLS = [f'CS_{f}' for f in CROSS_SECTIONAL_FEATURES]
+_INDUSTRY_COLS = INDUSTRY_COLS
+
 feature_cloums_map = {
     '39': _BASE_COLS_39,
     '158+39': _ALPHA_158_COLS + _TECH_39_ONLY,
     '158+39+market': _ALPHA_158_COLS + _TECH_39_ONLY + _MARKET_COLS,
+    '158+39+CS': _ALPHA_158_COLS + _TECH_39_ONLY + _CS_COLS,
+    '158+39+industry': _ALPHA_158_COLS + _TECH_39_ONLY + _INDUSTRY_COLS,
+    '158+39+market+industry': _ALPHA_158_COLS + _TECH_39_ONLY + _MARKET_COLS + _INDUSTRY_COLS,
 }
 
 def _engineer_158plus39_market(df):
     return engineer_features_158plus39(df, add_market=True)
 
 
+def _engineer_158plus39_industry(df):
+    return engineer_features_158plus39(df, add_market=False, add_industry=True)
+
+
+def _engineer_158plus39_market_industry(df):
+    return engineer_features_158plus39(df, add_market=True, add_industry=True)
+
+
 feature_engineer_func_map = {
     '39': engineer_features_39,
     '158+39': engineer_features_158plus39,
     '158+39+market': _engineer_158plus39_market,
+    '158+39+industry': _engineer_158plus39_industry,
+    '158+39+market+industry': _engineer_158plus39_market_industry,
 }
 
 
 # ---------- 标签构建 ----------
 
 def _build_label_and_clean(processed, drop_small_open=True):
-    """构建标签: (close_t5 - open_t1) / open_t1 —— 修复前瞻偏差"""
-    processed['close_t5'] = processed.groupby('股票代码')['收盘'].shift(-5)
+    """构建标签: (open_T+5 - open_T+1) / open_T+1 —— 比赛公式 (买入T+1开盘, 卖出T+5开盘)
+    ⛔ 必须用开盘价！2026-06-19 修复：close_t5 → open_t5
+    """
+    processed['open_t5'] = processed.groupby('股票代码')['开盘'].shift(-5)
     processed['open_t1'] = processed.groupby('股票代码')['开盘'].shift(-1)
 
     if drop_small_open:
         processed = processed[processed['open_t1'] > 1e-4]
 
-    processed['label'] = (processed['close_t5'] - processed['open_t1']) / (processed['open_t1'] + 1e-12)
+    processed['label'] = (processed['open_t5'] - processed['open_t1']) / (processed['open_t1'] + 1e-12)
     processed = processed.dropna(subset=['label'])
 
-    processed.drop(columns=['close_t5', 'open_t1'], inplace=True)
+    processed.drop(columns=['open_t5', 'open_t1'], inplace=True)
     return processed
 
 
@@ -213,6 +229,133 @@ class WeightedRankingLoss(nn.Module):
             return ranking_loss + self.multitask_weight * reg_loss
 
         return ranking_loss
+
+
+class LambdaRankLoss(nn.Module):
+    """LambdaRank (optimized): only Top-K pairs, O(K×n) instead of O(n²)"""
+    def __init__(self, k=5, sigma=1.0):
+        super().__init__()
+        self.k = k
+        self.sigma = sigma
+
+    def forward(self, y_pred, y_true):
+        batch, n = y_pred.shape
+        k = min(self.k, n)
+        device = y_pred.device
+
+        positions = torch.arange(1, n + 1, device=device, dtype=torch.float32)
+        discounts = 1.0 / torch.log2(positions + 1)  # [n]
+
+        total_loss = torch.tensor(0.0, device=device)
+        for b in range(batch):
+            # Top-K by true return
+            _, top_k_idx = torch.topk(y_true[b], k)
+
+            # Score diff: top-K vs ALL items  [k, n]
+            s_diff = y_pred[b, top_k_idx].unsqueeze(1) - y_pred[b].unsqueeze(0)
+
+            # True sign: should top-K score higher/lower than others
+            y_sign = torch.sign(y_true[b, top_k_idx].unsqueeze(1) - y_true[b].unsqueeze(0))
+
+            # NDCG position discount weight  [k, n]
+            d_top = discounts[top_k_idx].unsqueeze(1)  # [k, 1]
+            d_all = discounts.unsqueeze(0)  # [1, n]
+            dcg_w = torch.abs(d_top - d_all)  # [k, n]
+            dcg_w = dcg_w / (dcg_w.sum() + 1e-8)
+
+            pair_loss = torch.log(1 + torch.exp(-self.sigma * s_diff * y_sign))
+            total_loss += (pair_loss * dcg_w).sum()
+
+        return total_loss / batch
+
+
+class ListMLELoss(nn.Module):
+    """ListMLE: Plackett-Luce 排列概率, 聚焦 Top-K 排序质量"""
+    def __init__(self, k=5):
+        super().__init__()
+        self.k = k
+
+    def forward(self, y_pred, y_true):
+        batch, n = y_pred.shape
+        k = min(self.k, n)
+        _, idx = torch.sort(y_true, dim=1, descending=True)
+        losses = []
+        for b in range(batch):
+            for pos in range(k):
+                remaining = idx[b, pos:]
+                log_denom = torch.logsumexp(y_pred[b, remaining], dim=0)
+                losses.append(log_denom - y_pred[b, idx[b, pos]])
+        return torch.stack(losses).mean()
+
+
+class ApproxNDCGLoss(nn.Module):
+    """可微分 NDCG: sigmoid 近似排序, 期望 rank 折现"""
+    def __init__(self, k=5, temperature=0.5):
+        super().__init__()
+        self.k = k
+        self.temperature = temperature
+
+    def _approx_ranks(self, scores):
+        s_i = scores.unsqueeze(-1)
+        s_j = scores.unsqueeze(-2)
+        return 1 + torch.sigmoid((s_j - s_i) / self.temperature).sum(dim=-1)
+
+    def forward(self, y_pred, y_true):
+        batch, n = y_pred.shape
+        device = y_pred.device
+        k = min(self.k, n)
+
+        expected_ranks = self._approx_ranks(y_pred)
+        discounts = 1.0 / torch.log2(expected_ranks + 1)
+        approx_dcg = (y_true * discounts).sum(dim=-1)
+
+        positions = torch.arange(1, k + 1, device=device, dtype=torch.float32)
+        ideal_discounts = 1.0 / torch.log2(positions + 1)
+        _, ideal_idx = torch.topk(y_true, k, dim=-1)
+        ideal_dcg = (y_true.gather(-1, ideal_idx) * ideal_discounts.unsqueeze(0)).sum(dim=-1)
+
+        ndcg = approx_dcg / (ideal_dcg + 1e-8)
+        return -ndcg.mean()
+
+
+def _approx_ndcg_loss(y_pred, y_true, k=5, temperature=0.5):
+    batch, n = y_pred.shape
+    device = y_pred.device
+    k = min(k, n)
+
+    s_i = y_pred.unsqueeze(-1)
+    s_j = y_pred.unsqueeze(-2)
+    expected_ranks = 1 + torch.sigmoid((s_j - s_i) / temperature).sum(dim=-1)
+
+    discounts = 1.0 / torch.log2(expected_ranks + 1)
+    approx_dcg = (y_true * discounts).sum(dim=-1)
+
+    positions = torch.arange(1, k + 1, device=device, dtype=torch.float32)
+    ideal_discounts = 1.0 / torch.log2(positions + 1)
+    _, ideal_idx = torch.topk(y_true, k, dim=-1)
+    ideal_dcg = (y_true.gather(-1, ideal_idx) * ideal_discounts.unsqueeze(0)).sum(dim=-1)
+
+    ndcg = approx_dcg / (ideal_dcg + 1e-8)
+    return -ndcg.mean()
+
+
+class HybridRankingLoss(nn.Module):
+    """ListMLE + ApproxNDCG + LambdaRank 混合, 聚焦 Top-5"""
+    def __init__(self, k=5, listmle_weight=1.0, ndcg_weight=0.5,
+                 lambda_weight=0.3, sigma=1.0):
+        super().__init__()
+        self.k = k
+        self.listmle_weight = listmle_weight
+        self.ndcg_weight = ndcg_weight
+        self.lambda_weight = lambda_weight
+        self.listmle = ListMLELoss(k=k)
+        self.lambdarank = LambdaRankLoss(k=k, sigma=sigma)
+
+    def forward(self, y_pred, y_true):
+        loss = self.listmle_weight * self.listmle(y_pred, y_true)
+        loss += self.ndcg_weight * _approx_ndcg_loss(y_pred, y_true, self.k)
+        loss += self.lambda_weight * self.lambdarank(y_pred, y_true)
+        return loss
 
 
 # ---------- 评估指标 ----------
@@ -497,6 +640,8 @@ def split_train_val_by_last_month(df, sequence_length):
 # ---------- 主程序 ----------
 
 def main():
+    from config import config
+    from model import StockTransformer
     set_seed(config.get('seed', 42))
     output_dir = config['output_dir']
     os.makedirs(output_dir, exist_ok=True)

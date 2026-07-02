@@ -327,17 +327,28 @@ def main():
         if device.type == 'cuda':
             torch.cuda.empty_cache()
 
-    # 复制 Conv 专家
-    print(f"\n复制 Conv 专家...")
-    for exp_cfg in EXPERT_CONFIGS:
-        if exp_cfg['type'] == 'conv':
-            name = exp_cfg['name']
-            src = os.path.join(V3_DIR, f'expert_{name}.pth')
-            dst = os.path.join(OUTPUT_DIR, f'expert_{name}.pth')
-            if os.path.exists(src):
-                shutil.copy2(src, dst)
-                results[name] = 0.1  # placeholder
-                print(f"  {name}: 已复制")
+    # 训练 Conv 专家
+    print(f"\n训练 Conv 专家...")
+    conv_cfgs = [e for e in EXPERT_CONFIGS if e['type'] == 'conv']
+    for exp_cfg in conv_cfgs:
+        name = exp_cfg['name']
+        print(f"\n{'='*50}")
+        print(f"训练: {name}")
+        print(f"  hidden_channels={exp_cfg['hidden_channels']}, nhead={exp_cfg['nhead']}")
+
+        model = ConvStockExpert(n_feats, exp_cfg, num_stocks)
+        n_params = sum(p.numel() for p in model.parameters())
+        print(f"  参数量: {n_params:,}")
+        model.to(device)
+
+        best_score = train_expert(model, exp_cfg, dataset, device, name)
+        results[name] = best_score
+
+        torch.save(model.state_dict(), os.path.join(OUTPUT_DIR, f'expert_{name}.pth'))
+        print(f"  Saved: expert_{name}.pth (score={best_score:.4f})")
+        del model; gc.collect()
+        if device.type == 'cuda':
+            torch.cuda.empty_cache()
 
     # 保存配置
     config_out = {
