@@ -10,15 +10,25 @@
 - **选股数量**: Top 5，等权分配
 - **预测频率**: 每周一次，预测日为周四（或最新交易日）
 
-## 预训练模型（已包含在仓库中）
+## 预训练模型（GitHub Releases 下载）
 
-三个最优模型权重直接包含在仓库中，可立即用于推理：
+三个最优模型权重通过 GitHub Releases 分发（不在 git 仓库中减少体积）：
 
 | 模型 | 路径 | 大小 | 说明 |
 |------|------|------|------|
 | **CorrGNN** | `model/stock_emb_8_gnn_corr/expert_*.pth` | ~72MB | 4专家，相关性图卷积，W3最强 |
 | **Hybrid** | `model/stock_emb_8_hybrid/expert_*.pth` | ~89MB | 4专家，197维全量特征，最稳定 |
 | **Alpha158** | `model/stock_emb_8_alpha158/expert_*.pth` | ~89MB | 4专家，158动量因子，W1最强 |
+
+**下载链接**: [v1.0.0 Release](https://github.com/qiyu0417/stock-prediction-v3/releases/tag/v1.0.0) → `model-weights-best-3.tar.gz`
+
+### 安装模型权重
+
+```bash
+# 下载并解压到仓库根目录
+wget https://github.com/qiyu0417/stock-prediction-v3/releases/download/v1.0.0/model-weights-best-3.tar.gz
+tar -xzf model-weights-best-3.tar.gz
+```
 
 ### 快速推理
 
